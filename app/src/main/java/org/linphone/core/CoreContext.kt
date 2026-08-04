@@ -66,6 +66,16 @@ class CoreContext
     constructor(val context: Context) : HandlerThread("Core Thread") {
     companion object {
         private const val TAG = "[Core Context]"
+
+        // Gateway tenant this build dials phone numbers through. A number typed
+        // (or redialled, or clicked from a contact/call log) while registered on
+        // this domain is addressed to the gateway account and carried as a
+        // "dial" URI parameter instead, so the account's own B2BUA bridge is
+        // never in the call path. Anything that is not a phone number, or that
+        // is not on this domain, is left completely untouched.
+        private const val GATEWAY_TENANT_DOMAIN = "t1.sip-gateway.kaandikec.com"
+        private const val GATEWAY_ACCOUNT_USERNAME = "gw"
+        private const val GATEWAY_DIAL_URI_PARAM = "dial"
     }
 
     lateinit var core: Core
@@ -1091,6 +1101,24 @@ class CoreContext
                     return
                 }
             }
+        }
+
+        if (
+            domain == GATEWAY_TENANT_DOMAIN &&
+            account?.params?.identityAddress?.domain == GATEWAY_TENANT_DOMAIN &&
+            username.isNotEmpty() &&
+            username != GATEWAY_ACCOUNT_USERNAME &&
+            (username.startsWith("+") || username.isDigitsOnly())
+        ) {
+            val gatewayAddress = address.clone()
+            gatewayAddress.username = GATEWAY_ACCOUNT_USERNAME
+            gatewayAddress.setUriParam(GATEWAY_DIAL_URI_PARAM, username)
+            Log.i(
+                "$TAG Number [$username] dialled on gateway tenant [$domain], routing through gateway account [$GATEWAY_ACCOUNT_USERNAME] with [$GATEWAY_DIAL_URI_PARAM] parameter instead of the B2BUA"
+            )
+            core.inviteAddressWithParams(gatewayAddress, params)
+            Log.i("$TAG Starting call to [${gatewayAddress.asStringUriOnly()}]")
+            return
         }
 
         core.inviteAddressWithParams(address, params)
