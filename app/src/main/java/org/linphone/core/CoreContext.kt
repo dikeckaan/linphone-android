@@ -1064,6 +1064,15 @@ class CoreContext
 
         params.recordFile = LinphoneUtils.getRecordingFilePathForAddress(address)
 
+        val dialledUsername = address.username.orEmpty()
+        val looksLikePhoneNumber = dialledUsername.isNotEmpty() &&
+            (dialledUsername.startsWith("+") || dialledUsername.isDigitsOnly())
+
+        // The address that will actually be dialled. Left as-is unless the
+        // bare-number reachability pick below lands on an account whose own
+        // domain differs from the one already on the address.
+        var callAddress = address
+
         if (localAddress != null) {
             val account = core.accountList.find { account ->
                 account.params.identityAddress?.weakEqual(localAddress) == true
@@ -1081,21 +1090,64 @@ class CoreContext
                 )
             }
         } else {
+            // No account was explicitly chosen for this call (the common case:
+            // dial pad, contacts, call log, redial, Android Auto, the system
+            // dialer). For a bare phone number this is the gateway's own
+            // rendezvous problem: the phone can hold a local account (reaches
+            // the gateway directly, only usable on its own Wi-Fi) and a remote
+            // one (through the public proxy, reachable from anywhere) for the
+            // same user, and only one of them may actually be up right now.
+            // Picking per call -- rather than trusting whichever one
+            // provisioning marked default -- means it can't go stale between
+            // a network change and the call. Registration state (liblinphone's
+            // own Account.state, not the SSID) is what "reachable" means here:
+            // a phone can be on the gateway's Wi-Fi with the gateway itself
+            // down, or off it on a network that still happens to route in.
             val defaultAccount = core.defaultAccount
-            params.account = defaultAccount
-            Log.i("$TAG No local address given, using default account [${defaultAccount?.params?.identityAddress?.asStringUriOnly()}]")
+            val account = if (looksLikePhoneNumber) {
+                findReachableAccountForBareNumberDial(defaultAccount) ?: defaultAccount
+            } else {
+                // Not a phone number: leave whichever account is sensible,
+                // i.e. today's default-account behaviour, untouched.
+                defaultAccount
+            }
+            params.account = account
+            Log.i(
+                "$TAG No local address given, using account [${account?.params?.identityAddress?.asStringUriOnly()}] for this call"
+            )
+
+            // core.interpretUrl() (what turned the typed digits into this
+            // address) normalises against whichever account was marked
+            // default, not necessarily the one just picked above. If a
+            // different, actually-reachable account was chosen instead, the
+            // request has to leave addressed at THAT account's own domain --
+            // otherwise it goes out over the right registration but aimed at
+            // the wrong host.
+            val accountIdentityDomain = account?.params?.identityAddress?.domain
+            if (
+                looksLikePhoneNumber &&
+                accountIdentityDomain != null &&
+                accountIdentityDomain != address.domain
+            ) {
+                val reAddressed = address.clone()
+                reAddressed.domain = accountIdentityDomain
+                Log.i(
+                    "$TAG Re-addressing [$dialledUsername] from [${address.domain}] to the selected account's own domain [$accountIdentityDomain]"
+                )
+                callAddress = reAddressed
+            }
         }
 
-        val username = address.username.orEmpty()
-        val domain = address.domain.orEmpty()
+        val username = callAddress.username.orEmpty()
+        val domain = callAddress.domain.orEmpty()
         val account = params.account ?: core.defaultAccount
         if (account != null && Compatibility.isIpAddress(domain)) {
-            Log.i("$TAG SIP URI [${address.asStringUriOnly()}] seems to have an IP address as domain")
+            Log.i("$TAG SIP URI [${callAddress.asStringUriOnly()}] seems to have an IP address as domain")
             if (username.isNotEmpty() && (username.startsWith("+") || username.isDigitsOnly())) {
                 val identityDomain = account.params.identityAddress?.domain
                 Log.w("$TAG Username [$username] looks like a phone number, replacing domain [$domain] by the local account one [$identityDomain]")
                 if (identityDomain != null) {
-                    val newAddress = address.clone()
+                    val newAddress = callAddress.clone()
                     newAddress.domain = identityDomain
 
                     core.inviteAddressWithParams(newAddress, params)
@@ -1113,7 +1165,7 @@ class CoreContext
             username != gatewayUsername &&
             (username.startsWith("+") || username.isDigitsOnly())
         ) {
-            val gatewayAddress = address.clone()
+            val gatewayAddress = callAddress.clone()
             gatewayAddress.username = gatewayUsername
             gatewayAddress.setUriParam(GATEWAY_DIAL_URI_PARAM, username)
             Log.i(
@@ -1124,8 +1176,49 @@ class CoreContext
             return
         }
 
-        core.inviteAddressWithParams(address, params)
-        Log.i("$TAG Starting call to [${address.asStringUriOnly()}]")
+        core.inviteAddressWithParams(callAddress, params)
+        Log.i("$TAG Starting call to [${callAddress.asStringUriOnly()}]")
+    }
+
+    // For a bare-number dial with no explicitly chosen account: among the
+    // accounts that share the same identity username as the default one --
+    // the local/remote pair provisioned for the same gateway user, per
+    // task-p1b -- prefer the local leg (no GATEWAY_USERNAME_CUSTOM_PARAM: it
+    // already reaches the gateway directly) when it is currently registered,
+    // then the remote leg (the one carrying that custom param, routed through
+    // the proxy) when it is, falling back to the caller's default when
+    // neither is. Accounts belonging to a different identity (an unrelated
+    // account on the same phone) are never considered here.
+    @WorkerThread
+    private fun findReachableAccountForBareNumberDial(defaultAccount: Account?): Account? {
+        val identityUsername = defaultAccount?.params?.identityAddress?.username
+        if (identityUsername.isNullOrEmpty()) return defaultAccount
+
+        val siblings = core.accountList.filter {
+            it.params.identityAddress?.username == identityUsername
+        }
+
+        val local = siblings.firstOrNull {
+            it.params.getCustomParam(GATEWAY_USERNAME_CUSTOM_PARAM).isNullOrEmpty()
+        }
+        val remote = siblings.firstOrNull {
+            !it.params.getCustomParam(GATEWAY_USERNAME_CUSTOM_PARAM).isNullOrEmpty()
+        }
+
+        return when {
+            local != null && local.state == RegistrationState.Ok -> {
+                Log.i("$TAG Local account [${local.params.identityAddress?.asStringUriOnly()}] is registered, dialling through it")
+                local
+            }
+            remote != null && remote.state == RegistrationState.Ok -> {
+                Log.i("$TAG Local account not registered, but remote account [${remote.params.identityAddress?.asStringUriOnly()}] is, dialling through it")
+                remote
+            }
+            else -> {
+                Log.w("$TAG Neither local nor remote account is registered, falling back to default account")
+                defaultAccount
+            }
+        }
     }
 
     @WorkerThread
