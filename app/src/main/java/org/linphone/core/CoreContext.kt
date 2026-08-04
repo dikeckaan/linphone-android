@@ -67,14 +67,16 @@ class CoreContext
     companion object {
         private const val TAG = "[Core Context]"
 
-        // Gateway tenant this build dials phone numbers through. A number typed
-        // (or redialled, or clicked from a contact/call log) while registered on
-        // this domain is addressed to the gateway account and carried as a
-        // "dial" URI parameter instead, so the account's own B2BUA bridge is
-        // never in the call path. Anything that is not a phone number, or that
-        // is not on this domain, is left completely untouched.
-        private const val GATEWAY_TENANT_DOMAIN = "t1.sip-gateway.kaandikec.com"
-        private const val GATEWAY_ACCOUNT_USERNAME = "gw"
+        // An account whose provisioning declares this custom parameter dials
+        // phone numbers through the named gateway account instead of through
+        // whatever this domain's own B2BUA would otherwise do. A number typed
+        // (or redialled, or clicked from a contact/call log) while registered
+        // on that account is addressed to the gateway account and carried as
+        // a "dial" URI parameter instead, so the B2BUA is never in the call
+        // path. Anything that is not a phone number, or dialled from an
+        // account that declares no gateway, is left completely untouched --
+        // which is every account that is not one of ours.
+        private const val GATEWAY_USERNAME_CUSTOM_PARAM = "gateway_username"
         private const val GATEWAY_DIAL_URI_PARAM = "dial"
     }
 
@@ -1103,18 +1105,19 @@ class CoreContext
             }
         }
 
+        val gatewayUsername = account?.params?.getCustomParam(GATEWAY_USERNAME_CUSTOM_PARAM).orEmpty()
         if (
-            domain == GATEWAY_TENANT_DOMAIN &&
-            account?.params?.identityAddress?.domain == GATEWAY_TENANT_DOMAIN &&
+            gatewayUsername.isNotEmpty() &&
+            domain == account?.params?.identityAddress?.domain &&
             username.isNotEmpty() &&
-            username != GATEWAY_ACCOUNT_USERNAME &&
+            username != gatewayUsername &&
             (username.startsWith("+") || username.isDigitsOnly())
         ) {
             val gatewayAddress = address.clone()
-            gatewayAddress.username = GATEWAY_ACCOUNT_USERNAME
+            gatewayAddress.username = gatewayUsername
             gatewayAddress.setUriParam(GATEWAY_DIAL_URI_PARAM, username)
             Log.i(
-                "$TAG Number [$username] dialled on gateway tenant [$domain], routing through gateway account [$GATEWAY_ACCOUNT_USERNAME] with [$GATEWAY_DIAL_URI_PARAM] parameter instead of the B2BUA"
+                "$TAG Number [$username] dialled on gateway tenant [$domain], routing through gateway account [$gatewayUsername] with [$GATEWAY_DIAL_URI_PARAM] parameter instead of the B2BUA"
             )
             core.inviteAddressWithParams(gatewayAddress, params)
             Log.i("$TAG Starting call to [${gatewayAddress.asStringUriOnly()}]")
