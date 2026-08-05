@@ -7,6 +7,25 @@
   "client": [
     {
       "client_info": {
+        "mobilesdk_app_id": "1:955760620862:android:a8cb3bbc55ea652080e86f",
+        "android_client_info": {
+          "package_name": "com.kaandikec.dikecphone"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCsvXEucDF8VC5U1c_HcXn-mvVoWNvAJOc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
         "mobilesdk_app_id": "1:955760620862:android:da4d344ee2d565db80e86f",
         "android_client_info": {
           "package_name": "org.linphone"
