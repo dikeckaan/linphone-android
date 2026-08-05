@@ -69,8 +69,14 @@ class LinphoneUtils {
         @AnyThread
         fun getRemoteProvisioningUrlFromUri(uri: String): String? {
             val linphoneScheme = "linphone-config:"
-            return if (uri.startsWith(linphoneScheme)) {
-                val remoteConfigUri = uri.substring(linphoneScheme.length)
+            val dikecphoneScheme = "dikecphone-config:"
+            val matchedScheme = when {
+                uri.startsWith(linphoneScheme) -> linphoneScheme
+                uri.startsWith(dikecphoneScheme) -> dikecphoneScheme
+                else -> null
+            }
+            return if (matchedScheme != null) {
+                val remoteConfigUri = uri.substring(matchedScheme.length)
                 val url = when {
                     remoteConfigUri.startsWith("http://") || remoteConfigUri.startsWith("https://") -> remoteConfigUri
                     remoteConfigUri.startsWith("file://") -> remoteConfigUri

@@ -597,7 +597,7 @@ class MainActivity : GenericActivity() {
             }
             Intent.ACTION_VIEW -> {
                 val uri = intent.data?.toString() ?: ""
-                if (uri.startsWith("linphone-config:")) {
+                if (uri.startsWith("linphone-config:") || uri.startsWith("dikecphone-config:")) {
                     handleConfigIntent(uri)
                 } else {
                     handleCallIntent(intent)

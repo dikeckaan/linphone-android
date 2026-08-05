@@ -130,6 +130,7 @@
                 <data android:scheme="linphone-sip" />
                 <data android:scheme="linphone-sips" />
                 <data android:scheme="linphone-config" />
+                <data android:scheme="dikecphone-config" />
             </intent-filter>
 
         </activity>
